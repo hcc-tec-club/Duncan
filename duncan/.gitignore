@@ -1,0 +1,32 @@
+# Build output (GitHub Actions makes the binaries)
+.pio/
+build/
+*.hex
+*.bin
+*.uf2
+*.elf
+
+# Secrets: commit secrets.example.h instead
+secrets.h
+.env
+
+# Editors and OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+
+# KiCad backups and caches
+*-backups/
+*.kicad_prl
+fp-info-cache
+_autosave-*
+*.lck
+\#auto_saved_files#
+
+# Python / Node
+__pycache__/
+*.pyc
+.venv/
+node_modules/

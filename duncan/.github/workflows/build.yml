@@ -1,0 +1,82 @@
+# Builds every PlatformIO project in firmware/ on pull requests and
+# pushes to main. When a GitHub release is published with a tag like
+# SW-0003-v1.2.0, it builds that SW number's firmware and attaches the
+# files to the release.
+name: Build
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  find:
+    runs-on: ubuntu-latest
+    outputs:
+      projects: ${{ steps.list.outputs.projects }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: list
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/SW-* ]]; then
+            num=$(echo "$GITHUB_REF_NAME" | sed -E 's/^(SW-[0-9]{4}).*/\1/')
+            dirs=$(find firmware -mindepth 1 -maxdepth 1 -type d -name "${num}*" \
+              -exec test -f {}/platformio.ini \; -print)
+          else
+            dirs=$(find firmware -mindepth 2 -maxdepth 2 -name platformio.ini \
+              -printf '%h\n')
+          fi
+          json=$(printf '%s\n' $dirs | jq -R . | jq -cs 'map(select(length > 0))')
+          echo "Projects: $json"
+          echo "projects=$json" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: find
+    if: needs.find.outputs.projects != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        project: ${{ fromJson(needs.find.outputs.projects) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ runner.os }}-${{ hashFiles('firmware/**/platformio.ini') }}
+      - run: pip install platformio
+      - name: Build
+        run: pio run -d "${{ matrix.project }}"
+      - name: Collect files
+        id: out
+        shell: bash
+        run: |
+          name=$(basename "${{ matrix.project }}")
+          if [[ "$GITHUB_REF" == refs/tags/SW-* ]]; then name="$GITHUB_REF_NAME"; fi
+          mkdir -p out
+          for f in "${{ matrix.project }}"/.pio/build/*/firmware.{hex,bin,uf2,elf}; do
+            [ -f "$f" ] || continue
+            env=$(basename "$(dirname "$f")")
+            cp "$f" "out/${name}-${env}.${f##*.}"
+          done
+          ls -l out
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.out.outputs.name }}
+          path: out/*
+      - name: Attach to the GitHub release (tags only)
+        if: startsWith(github.ref, 'refs/tags/SW-')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: out/*
+          generate_release_notes: true
